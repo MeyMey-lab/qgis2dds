@@ -24,16 +24,16 @@ import shutil
 
 from qgis.utils import iface
 
-class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
+class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
 
     # --- パラメータID ---
-    P_EXTENT = 'EXTENT'             
-    P_USE_CUSTOM = 'USE_CUSTOM'     
-    P_SIZE_ENUM = 'SIZE_ENUM'       
-    P_WIDTH = 'WIDTH'               
-    P_HEIGHT = 'HEIGHT'             
-    P_FORMAT = 'FORMAT'             
-    P_MAX_LEVELS = 'MAX_LEVELS'     
+    P_EXTENT = 'EXTENT'
+    P_USE_CUSTOM = 'USE_CUSTOM'
+    P_SIZE_ENUM = 'SIZE_ENUM'
+    P_WIDTH = 'WIDTH'
+    P_HEIGHT = 'HEIGHT'
+    P_FORMAT = 'FORMAT'
+    P_MAX_LEVELS = 'MAX_LEVELS'
     P_TEX_ASSEMBLE = 'TEX_ASSEMBLE'
     P_TEX_CONV = 'TEX_CONV'
     P_OUTPUT_FOLDER = 'OUTPUT_FOLDER'
@@ -53,7 +53,8 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
     SETTING_KEY_CONV = 'DDSExporter/TexConvPath'
 
     # リスト定義
-    SIZE_OPTIONS = ['16384', '8192', '4096', '2048', '1024', '512']
+    SIZE_OPTIONS = ['16384', '8192', '4096', '2048', '1024', '512', '256', '128']
+    
     MIP_OPTIONS = ['自動 (最大まで生成)', 'なし (ベース画像のみ)'] + [str(i) for i in range(1, 13)]
     
     FORMAT_NAMES = [
@@ -69,10 +70,10 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return ExportDDSCustomMips_v26_FinalFix()
+        return ExportDDSCustomMips_v28_AssembleFix()
 
     def name(self):
-        return 'export_dds_custom_mips_v26'
+        return 'export_dds_custom_mips_v28'
 
     def displayName(self):
         return self.tr('DDS画像作成')
@@ -101,22 +102,18 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
 
         self.addParameter(QgsProcessingParameterEnum(self.P_FORMAT, self.tr('圧縮形式'), options=self.FORMAT_NAMES, defaultValue=0))
         
+        self.addParameter(QgsProcessingParameterEnum(self.P_MAX_LEVELS, self.tr('ミップマップ Level数'), options=self.MIP_OPTIONS, defaultValue=0))
+        
         self.addParameter(QgsProcessingParameterString(self.P_FILENAME, self.tr('保存ファイル名 (拡張子 .dds は自動付与)'), defaultValue='my_map'))
         self.addParameter(QgsProcessingParameterFolderDestination(self.P_OUTPUT_FOLDER, self.tr('出力先フォルダ')))
 
         # =====================================================================
-        #  高度なパラメータ (折りたたみ)
+        #  高度なパラメータ
         # =====================================================================
         
-        # ミップマップ数
-        self.addParameter(QgsProcessingParameterEnum(self.P_MAX_LEVELS, self.tr('ミップマップ Level数'), options=self.MIP_OPTIONS, defaultValue=0)) # デフォルト: 自動
-
-        # 動的リスト生成ロジック
         layer_names = []
         layer_ids_str = ""
-        
         try:
-            # iface (GUI) がある場合、キャンバスのレイヤ順序(上から順)を取得
             layers = iface.mapCanvas().layers()
             id_list = []
             for l in layers:
@@ -124,7 +121,6 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
                 id_list.append(l.id())
             layer_ids_str = ",".join(id_list)
         except:
-            # GUIがない場合のフォールバック
             layers = QgsProject.instance().mapLayers().values()
             id_list = []
             for l in layers:
@@ -132,34 +128,26 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
                 id_list.append(l.id())
             layer_ids_str = ",".join(id_list)
 
-        # 隠しパラメータ: レイヤIDリスト
         param_ids = QgsProcessingParameterString(self.P_VISIBLE_IDS, "Hidden IDs", defaultValue=layer_ids_str)
         param_ids.setFlags(param_ids.flags() | QgsProcessingParameterDefinition.FlagHidden)
         self.addParameter(param_ids)
 
-        # レイヤ選択プルダウン
-        
-        # Level 1
         param_l1 = QgsProcessingParameterEnum(self.P_HIDE_L1, self.tr('Level 1 (1/2サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l1.setFlags(param_l1.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l1)
 
-        # Level 2
         param_l2 = QgsProcessingParameterEnum(self.P_HIDE_L2, self.tr('Level 2 (1/4サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l2.setFlags(param_l2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l2)
 
-        # Level 3
         param_l3 = QgsProcessingParameterEnum(self.P_HIDE_L3, self.tr('Level 3 (1/8サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l3.setFlags(param_l3.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l3)
 
-        # Level 4
         param_l4 = QgsProcessingParameterEnum(self.P_HIDE_L4, self.tr('Level 4 (1/16サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l4.setFlags(param_l4.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l4)
 
-        # ツールパス
         param_assemble = QgsProcessingParameterFile(self.P_TEX_ASSEMBLE, self.tr('texassemble.exe のパス'), fileFilter='Executables (*.exe)', defaultValue=default_assemble)
         param_assemble.setFlags(param_assemble.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_assemble)
@@ -214,7 +202,6 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
             
         format_idx = self.parameterAsInt(parameters, self.P_FORMAT, context)
         format_cmd = self.FORMAT_CMDS[format_idx]
-        max_levels = self.parameterAsInt(parameters, self.P_MAX_LEVELS, context)
         
         output_folder = self.parameterAsString(parameters, self.P_OUTPUT_FOLDER, context)
         user_filename = self.parameterAsString(parameters, self.P_FILENAME, context)
@@ -224,7 +211,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
         
         final_dds_path = os.path.normpath(os.path.join(output_folder, f"{user_filename}.dds"))
         
-        # --- IDリスト復元と設定 ---
+        # --- IDリスト復元 ---
         ids_str = self.parameterAsString(parameters, self.P_VISIBLE_IDS, context)
         reference_layer_ids = ids_str.split(',') if ids_str else []
 
@@ -248,7 +235,6 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
             feedback.pushInfo(f"Using Temp Dir: {temp_dir}")
             
             project = context.project()
-            
             bg_color = project.backgroundColor()
 
             generated_pngs = []
@@ -263,7 +249,8 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
                 curr_w = int(start_w / (2 ** level))
                 curr_h = int(start_h / (2 ** level))
 
-                if curr_w < 4 or curr_h < 4: break
+                # texconvは1x1まで許容するため、1未満になるまで回す
+                if curr_w < 1 or curr_h < 1: break
 
                 # レイヤフィルタリング
                 hidden_ids_current = set()
@@ -282,7 +269,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
                 settings.setLayers(active_layers)
                 settings.setDestinationCrs(project.crs())
                 settings.setExtent(extent)
-                settings.setOutputSize(QSize(curr_w, curr_h)) # QSize is now imported
+                settings.setOutputSize(QSize(curr_w, curr_h))
                 settings.setBackgroundColor(bg_color)
 
                 job = QgsMapRendererParallelJob(settings)
@@ -295,9 +282,8 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
                 generated_pngs.append(out_path)
                 
                 feedback.setProgress((level / total_steps) * 100)
-                feedback.pushInfo(f"Level {level} ({curr_w}px): Rendering {len(active_layers)} layers")
 
-            # --- Step 2: 結合 ---
+            # --- Step 2: 結合 (texassemble) ---
             feedback.pushInfo("Combining...")
             temp_dds_uncompressed = os.path.join(temp_dir, "temp_uncompressed.dds")
             
@@ -309,6 +295,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
 
             cmd_assemble = [tex_assemble, "from-mips", "-y", "-o", temp_dds_uncompressed] + generated_pngs
             
+            # stdoutも取得するように設定
             proc_assemble = subprocess.run(
                 cmd_assemble, 
                 capture_output=True, 
@@ -317,10 +304,18 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
                 startupinfo=startupinfo
             )
             
+            # エラーチェック
             if proc_assemble.returncode != 0:
                 raise RuntimeError(f"texassemble エラー (Code {proc_assemble.returncode}):\n{proc_assemble.stderr}\n{proc_assemble.stdout}")
+                
+            if not os.path.exists(temp_dds_uncompressed):
+                raise RuntimeError(
+                    f"【重大】texassembleは正常終了しましたが、ファイルが生成されませんでした。\n"
+                    f"画像サイズや枚数が規格(Power of 2)に合っていない可能性があります。\n"
+                    f"--- texassemble ログ ---\n{proc_assemble.stdout}\n{proc_assemble.stderr}"
+                )
 
-            # --- Step 3: 変換と移動 ---
+            # --- Step 3: 変換と移動 (texconv) ---
             feedback.pushInfo("Compressing to Final Destination...")
             
             cmd_convert = [tex_conv, "-f", format_cmd, "-y", "-o", temp_dir, temp_dds_uncompressed]
@@ -334,7 +329,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
             )
             
             if proc_convert.returncode != 0:
-                 raise RuntimeError(f"texconv エラー (Code {proc_convert.returncode}):\n{proc_convert.stderr}")
+                 raise RuntimeError(f"texconv エラー (Code {proc_convert.returncode}):\n{proc_convert.stderr}\n{proc_convert.stdout}")
 
             expected_output = os.path.join(temp_dir, "temp_uncompressed.dds")
             if not os.path.exists(expected_output):
