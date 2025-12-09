@@ -21,7 +21,8 @@ import tempfile
 import shutil
 from qgis.utils import iface
 
-class ExportDDSCustomMips(QgsProcessingAlgorithm):
+class ExportDDSCustomMips_v21_FixEnum(QgsProcessingAlgorithm):
+
     # --- パラメータID ---
     P_EXTENT = 'EXTENT'             
     P_USE_CUSTOM = 'USE_CUSTOM'     
@@ -34,6 +35,12 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
     P_TEX_CONV = 'TEX_CONV'
     P_OUTPUT_FOLDER = 'OUTPUT_FOLDER'
     P_FILENAME = 'FILENAME'
+
+    # レイヤ制御用
+    P_HIDE_L1 = 'HIDE_L1'
+    P_HIDE_L2 = 'HIDE_L2'
+    P_HIDE_L3 = 'HIDE_L3'
+    P_HIDE_L4 = 'HIDE_L4'
 
     # 設定保存キー
     SETTING_KEY_ASSEMBLE = 'DDSExporter/TexAssemblePath'
@@ -55,13 +62,13 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return ExportDDSCustomMips()
+        return ExportDDSCustomMips_v21_FixEnum()
 
     def name(self):
-        return 'export_dds_custom_mips_v16'
+        return 'export_dds_custom_mips_v21'
 
     def displayName(self):
-        return self.tr('DDS画像作成')
+        return self.tr('DDS作成ツール')
 
     def group(self):
         return self.tr('User Scripts')
@@ -78,96 +85,72 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
         default_assemble = settings.value(self.SETTING_KEY_ASSEMBLE, '', type=str)
         default_conv = settings.value(self.SETTING_KEY_CONV, '', type=str)
 
-        # 1. 領域指定
-        self.addParameter(
-            QgsProcessingParameterExtent(
-                self.P_EXTENT,
-                self.tr('描画領域'),
-                defaultValue=None
-            )
-        )
-
-        # 2. サイズ
-        self.addParameter(
-            QgsProcessingParameterEnum(
-                self.P_SIZE_ENUM,
-                self.tr('DDS画像サイズ (px)'),
-                options=self.SIZE_OPTIONS,
-                defaultValue=1 # 8192
-            )
-        )
-
-        # カスタムサイズ
-        self.addParameter(
-            QgsProcessingParameterBoolean(
-                self.P_USE_CUSTOM,
-                self.tr('カスタムサイズ (チェック時のみ数値を適用)'),
-                defaultValue=False
-            )
-        )
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.P_WIDTH, self.tr('カスタム幅 (px)'),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=1920, optional=True, minValue=1
-            )
-        )
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.P_HEIGHT, self.tr('カスタム高さ (px)'),
-                type=QgsProcessingParameterNumber.Integer,
-                defaultValue=1080, optional=True, minValue=1
-            )
-        )
-
-        # 形式
-        self.addParameter(
-            QgsProcessingParameterEnum(
-                self.P_FORMAT, self.tr('圧縮形式'),
-                options=self.FORMAT_NAMES, defaultValue=0
-            )
-        )
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.P_MAX_LEVELS, self.tr('ミップマップ数'),
-                type=QgsProcessingParameterNumber.Integer, defaultValue=8, minValue=1, maxValue=14
-            )
-        )
-
-        # ファイル名
-        self.addParameter(
-            QgsProcessingParameterString(
-                self.P_FILENAME,
-                self.tr('保存ファイル名 (拡張子 .dds は自動付与)'),
-                defaultValue='my_map'
-            )
-        )
-
-        # 出力先
-        self.addParameter(QgsProcessingParameterFolderDestination(self.P_OUTPUT_FOLDER, self.tr('出力先フォルダ')))
-
-        # ツールパス
-        self.addParameter(QgsProcessingParameterFile(
-            self.P_TEX_ASSEMBLE, 
-            self.tr('texassemble.exe のパス'), 
-            fileFilter='Executables (*.exe)',
-            defaultValue=default_assemble,
-        ))
+        self.addParameter(QgsProcessingParameterExtent(self.P_EXTENT, self.tr('描画領域'), defaultValue=None))
+        self.addParameter(QgsProcessingParameterEnum(self.P_SIZE_ENUM, self.tr("<hr>"'DDS画像サイズ (px)'), options=self.SIZE_OPTIONS, defaultValue=3))
         
-        self.addParameter(QgsProcessingParameterFile(
-            self.P_TEX_CONV, 
-            self.tr('texconv.exe のパス'), 
-            fileFilter='Executables (*.exe)',
-            defaultValue=default_conv,
-        ))
+        self.addParameter(QgsProcessingParameterBoolean(self.P_USE_CUSTOM, self.tr('カスタムサイズ (チェック時のみ数値を適用)'), defaultValue=False))
+        self.addParameter(QgsProcessingParameterNumber(self.P_WIDTH, self.tr('カスタム幅 (px)'), type=QgsProcessingParameterNumber.Integer, defaultValue=1920, optional=True, minValue=1))
+        self.addParameter(QgsProcessingParameterNumber(self.P_HEIGHT, self.tr('カスタム高さ (px)'), type=QgsProcessingParameterNumber.Integer, defaultValue=1080, optional=True, minValue=1))
 
+        self.addParameter(QgsProcessingParameterEnum(self.P_FORMAT, self.tr("<hr>"'圧縮形式'), options=self.FORMAT_NAMES, defaultValue=0))
+        self.addParameter(QgsProcessingParameterNumber(self.P_MAX_LEVELS, self.tr("<hr>"'ミップマップ数'), type=QgsProcessingParameterNumber.Integer, defaultValue=8, minValue=1, maxValue=14))
+
+        # =========================================================================
+        # ★GUI構築時に「現在見えているレイヤ」の一覧を取得してリスト化
+        # =========================================================================
+        layer_names = []
+        try:
+            layers = iface.mapCanvas().layers()
+            for l in layers:
+                layer_names.append(l.name())
+        except:
+            layers = QgsProject.instance().mapLayers().values()
+            for l in layers:
+                layer_names.append(l.name())
+
+        # Layerパラメータではなく、Enumパラメータ(リスト選択)として定義
+        self.addParameter(QgsProcessingParameterEnum(
+            self.P_HIDE_L1, 
+            self.tr('Level 1 (1/2サイズ) 以降で隠すレイヤ'), 
+            options=layer_names, 
+            allowMultiple=True, # 複数選択可
+            optional=True
+        ))
+        self.addParameter(QgsProcessingParameterEnum(
+            self.P_HIDE_L2, 
+            self.tr('Level 2 (1/4サイズ) 以降で隠すレイヤ'), 
+            options=layer_names, 
+            allowMultiple=True,
+            optional=True
+        ))
+        self.addParameter(QgsProcessingParameterEnum(
+            self.P_HIDE_L3, 
+            self.tr('Level 3 (1/8サイズ) 以降で隠すレイヤ'), 
+            options=layer_names, 
+            allowMultiple=True,
+            optional=True
+        ))
+        self.addParameter(QgsProcessingParameterEnum(
+            self.P_HIDE_L4, 
+            self.tr('Level 4 (1/16サイズ) 以降で隠すレイヤ'), 
+            options=layer_names, 
+            allowMultiple=True,
+            optional=True
+        ))
+        # =========================================================================
+        
+        self.addParameter(QgsProcessingParameterFile(self.P_TEX_ASSEMBLE, self.tr("<hr>"'texassemble.exe のパス'), fileFilter='Executables (*.exe)', defaultValue=default_assemble))
+        self.addParameter(QgsProcessingParameterFile(self.P_TEX_CONV, self.tr('texconv.exe のパス'), fileFilter='Executables (*.exe)', defaultValue=default_conv))
+
+        self.addParameter(QgsProcessingParameterString(self.P_FILENAME, self.tr("<hr>"'保存ファイル名 (拡張子 .dds は自動付与)'), defaultValue='my_map'))
+        self.addParameter(QgsProcessingParameterFolderDestination(self.P_OUTPUT_FOLDER, self.tr('出力先フォルダ')))
+        
     def processAlgorithm(self, parameters, context, feedback):
         # --- ツールパス処理 ---
         tex_assemble = self.parameterAsFile(parameters, self.P_TEX_ASSEMBLE, context)
         tex_conv = self.parameterAsFile(parameters, self.P_TEX_CONV, context)
 
-        if not tex_assemble or not tex_conv:
-             raise ValueError("【エラー】ツールパスが空欄です。")
+        if not tex_assemble or not tex_conv: raise ValueError("【エラー】ツールパスが空欄です。")
 
         tex_assemble = os.path.normpath(tex_assemble.strip().strip('"').strip("'"))
         tex_conv = os.path.normpath(tex_conv.strip().strip('"').strip("'"))
@@ -205,6 +188,31 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
         
         final_dds_path = os.path.normpath(os.path.join(output_folder, f"{user_filename}.dds"))
         
+        # ★修正: parameterAsEnums (複数形) を使用してインデックスリストを取得
+        l1_indices = self.parameterAsEnums(parameters, self.P_HIDE_L1, context)
+        l2_indices = self.parameterAsEnums(parameters, self.P_HIDE_L2, context)
+        l3_indices = self.parameterAsEnums(parameters, self.P_HIDE_L3, context)
+        l4_indices = self.parameterAsEnums(parameters, self.P_HIDE_L4, context)
+
+        # 実行時に改めて「基準レイヤリスト」を作成 (インデックスとの対応付けのため)
+        reference_layer_ids = []
+        try:
+            layers_obj = iface.mapCanvas().layers()
+            for l in layers_obj:
+                reference_layer_ids.append(l.id())
+        except:
+            layers_obj = QgsProject.instance().mapLayers().values()
+            for l in layers_obj:
+                reference_layer_ids.append(l.id())
+
+        # インデックス番号をレイヤIDに変換
+        hide_rules_ids = {
+            1: set(reference_layer_ids[i] for i in l1_indices if i < len(reference_layer_ids)),
+            2: set(reference_layer_ids[i] for i in l2_indices if i < len(reference_layer_ids)),
+            3: set(reference_layer_ids[i] for i in l3_indices if i < len(reference_layer_ids)),
+            4: set(reference_layer_ids[i] for i in l4_indices if i < len(reference_layer_ids)),
+        }
+
         feedback.pushInfo(f"Target Size: {start_w} x {start_h}")
         feedback.pushInfo(f"Final Output: {final_dds_path}")
 
@@ -215,11 +223,11 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
             project = context.project()
             
             try:
-                layers = iface.mapCanvas().layers()
-                # feedback.pushInfo("GUIキャンバスの表示設定(チェック状態)を反映します。")
+                base_layers = iface.mapCanvas().layers()
+                feedback.pushInfo("GUIキャンバスのチェック状態を基準にします。")
             except:
-                layers = project.mapThemeCollection().masterLayerOrder()
-                # feedback.pushInfo("GUIコンテキスト外のため、全レイヤを出力します。")
+                base_layers = project.mapThemeCollection().masterLayerOrder()
+                feedback.pushInfo("全レイヤを基準にします。")
 
             bg_color = project.backgroundColor()
 
@@ -237,8 +245,19 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
 
                 if curr_w < 4 or curr_h < 4: break
 
+                # ★レイヤフィルタリング★
+                hidden_ids_current = set()
+                for rule_level, ids in hide_rules_ids.items():
+                    if level >= rule_level: 
+                        hidden_ids_current.update(ids)
+                
+                active_layers = []
+                for layer in base_layers:
+                    if layer.id() not in hidden_ids_current:
+                        active_layers.append(layer)
+
                 settings = QgsMapSettings()
-                settings.setLayers(layers)
+                settings.setLayers(active_layers)
                 settings.setDestinationCrs(project.crs())
                 settings.setExtent(extent)
                 settings.setOutputSize(QSize(curr_w, curr_h))
@@ -254,6 +273,7 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
                 generated_pngs.append(out_path)
                 
                 feedback.setProgress((level / total_steps) * 100)
+                feedback.pushInfo(f"Level {level} ({curr_w}px): {len(active_layers)} layers visible")
 
             # --- Step 2: 結合 ---
             feedback.pushInfo("Combining...")
@@ -265,7 +285,6 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
 
-            # コマンド: from-mips
             cmd_assemble = [tex_assemble, "from-mips", "-y", "-o", temp_dds_uncompressed] + generated_pngs
             
             proc_assemble = subprocess.run(
@@ -295,7 +314,6 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
             if proc_convert.returncode != 0:
                  raise RuntimeError(f"texconv エラー (Code {proc_convert.returncode}):\n{proc_convert.stderr}")
 
-            # 生成されたファイル特定
             expected_output = os.path.join(temp_dir, "temp_uncompressed.dds")
             if not os.path.exists(expected_output):
                 expected_output_upper = os.path.join(temp_dir, "temp_uncompressed.DDS")
@@ -305,7 +323,6 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
                     files = os.listdir(temp_dir)
                     raise RuntimeError(f"圧縮後のファイルが見つかりません。一時フォルダ内容: {files}")
             
-            # 移動先フォルダ作成と移動
             dest_dir = os.path.dirname(final_dds_path)
             if not os.path.exists(dest_dir):
                 os.makedirs(dest_dir, exist_ok=True)
