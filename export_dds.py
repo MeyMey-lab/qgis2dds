@@ -46,8 +46,10 @@ class ExportDDSCustomMips_v30_Ultimate(QgsProcessingAlgorithm):
     P_HIDE_L2 = 'HIDE_L2'
     P_HIDE_L3 = 'HIDE_L3'
     P_HIDE_L4 = 'HIDE_L4'
+    P_HIDE_L5 = 'HIDE_L5'
+    P_HIDE_L6 = 'HIDE_L6'
     
-    # ★重要: IDリスト受け渡し用の隠しパラメータ
+    # IDリスト受け渡し用の隠しパラメータ
     P_VISIBLE_IDS = 'VISIBLE_IDS_HIDDEN'
 
     # 設定保存キー
@@ -158,6 +160,14 @@ class ExportDDSCustomMips_v30_Ultimate(QgsProcessingAlgorithm):
         param_l4 = QgsProcessingParameterEnum(self.P_HIDE_L4, self.tr('Level 4 (1/16サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l4.setFlags(param_l4.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l4)
+        
+        param_l5 = QgsProcessingParameterEnum(self.P_HIDE_L5, self.tr('Level 5 (1/32サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
+        param_l5.setFlags(param_l5.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(param_l5)
+
+        param_l6 = QgsProcessingParameterEnum(self.P_HIDE_L6, self.tr('Level 6 (1/64サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
+        param_l6.setFlags(param_l6.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(param_l6)
 
         # ツールパス
         param_assemble = QgsProcessingParameterFile(self.P_TEX_ASSEMBLE, self.tr('texassemble.exe のパス'), fileFilter='Executables (*.exe)', defaultValue=default_assemble)
@@ -231,12 +241,16 @@ class ExportDDSCustomMips_v30_Ultimate(QgsProcessingAlgorithm):
         l2_indices = self.parameterAsEnums(parameters, self.P_HIDE_L2, context)
         l3_indices = self.parameterAsEnums(parameters, self.P_HIDE_L3, context)
         l4_indices = self.parameterAsEnums(parameters, self.P_HIDE_L4, context)
+        l5_indices = self.parameterAsEnums(parameters, self.P_HIDE_L5, context)
+        l6_indices = self.parameterAsEnums(parameters, self.P_HIDE_L6, context)
 
         hide_rules_ids = {
             1: set(reference_layer_ids[i] for i in l1_indices if i < len(reference_layer_ids)),
             2: set(reference_layer_ids[i] for i in l2_indices if i < len(reference_layer_ids)),
             3: set(reference_layer_ids[i] for i in l3_indices if i < len(reference_layer_ids)),
             4: set(reference_layer_ids[i] for i in l4_indices if i < len(reference_layer_ids)),
+            5: set(reference_layer_ids[i] for i in l5_indices if i < len(reference_layer_ids)),
+            6: set(reference_layer_ids[i] for i in l6_indices if i < len(reference_layer_ids)),
         }
 
         feedback.pushInfo(f"Target Size: {start_w} x {start_h}")
