@@ -17,6 +17,7 @@ from qgis.core import (
     QgsSettings
 )
 import os
+import math
 import subprocess
 import tempfile
 import shutil
@@ -53,6 +54,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
 
     # リスト定義
     SIZE_OPTIONS = ['16384', '8192', '4096', '2048', '1024', '512']
+    MIP_OPTIONS = ['自動 (最大まで生成)', 'なし (ベース画像のみ)'] + [str(i) for i in range(1, 13)]
     
     FORMAT_NAMES = [
         'BC7 (高品質・推奨) - 地図に最適', 
@@ -73,7 +75,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
         return 'export_dds_custom_mips_v26'
 
     def displayName(self):
-        return self.tr('DDS画像作成ツール')
+        return self.tr('DDS画像作成')
 
     def group(self):
         return self.tr('User Scripts')
@@ -107,9 +109,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
         # =====================================================================
         
         # ミップマップ数
-        param_levels = QgsProcessingParameterNumber(self.P_MAX_LEVELS, self.tr('ミップマップ Level数'), type=QgsProcessingParameterNumber.Integer, defaultValue=8, minValue=1, maxValue=14)
-        param_levels.setFlags(param_levels.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-        self.addParameter(param_levels)
+        self.addParameter(QgsProcessingParameterEnum(self.P_MAX_LEVELS, self.tr('ミップマップ Level数'), options=self.MIP_OPTIONS, defaultValue=0)) # デフォルト: 自動
 
         # 動的リスト生成ロジック
         layer_names = []
@@ -198,6 +198,19 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
             size = int(self.SIZE_OPTIONS[enum_idx])
             start_w = size
             start_h = size
+            
+        mip_index = self.parameterAsInt(parameters, self.P_MAX_LEVELS, context)
+        
+        if mip_index == 0:
+            max_size = max(start_w, start_h)
+            max_levels = int(math.log2(max_size)) + 1
+            feedback.pushInfo(f"Mipmap: Auto (Max {max_levels} levels)")
+        else:
+            max_levels = mip_index
+            if max_levels == 1:
+                feedback.pushInfo("Mipmap: None (Base image only)")
+            else:
+                feedback.pushInfo(f"Mipmap: Fixed {max_levels - 1} levels (Total {max_levels} images)")
             
         format_idx = self.parameterAsInt(parameters, self.P_FORMAT, context)
         format_cmd = self.FORMAT_CMDS[format_idx]
