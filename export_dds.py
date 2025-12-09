@@ -40,7 +40,7 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
     SETTING_KEY_CONV = 'DDSExporter/TexConvPath'
 
     # リスト定義 (降順)
-    SIZE_OPTIONS = ['65536', '32768', '16384', '8192', '4096', '2048', '1024']
+    SIZE_OPTIONS = ['16384', '8192', '4096', '2048', '1024', '512', '256', '128']
     
     FORMAT_NAMES = [
         'BC7 (高品質・推奨) - 地図に最適', 
@@ -93,7 +93,7 @@ class ExportDDSCustomMips(QgsProcessingAlgorithm):
                 self.P_SIZE_ENUM,
                 self.tr('DDS画像サイズ (px)'),
                 options=self.SIZE_OPTIONS,
-                defaultValue=3 # 8192
+                defaultValue=1 # 8192
             )
         )
 
