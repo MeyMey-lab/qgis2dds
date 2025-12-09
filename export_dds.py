@@ -21,10 +21,12 @@ import math
 import subprocess
 import tempfile
 import shutil
+import time
 
+# ifaceはGUI構築時(initAlgorithm)のみに使用するため安全にインポート
 from qgis.utils import iface
 
-class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
+class ExportDDSCustomMips_v30_Ultimate(QgsProcessingAlgorithm):
 
     # --- パラメータID ---
     P_EXTENT = 'EXTENT'
@@ -45,7 +47,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
     P_HIDE_L3 = 'HIDE_L3'
     P_HIDE_L4 = 'HIDE_L4'
     
-    # IDリスト受け渡し用の隠しパラメータ
+    # ★重要: IDリスト受け渡し用の隠しパラメータ
     P_VISIBLE_IDS = 'VISIBLE_IDS_HIDDEN'
 
     # 設定保存キー
@@ -54,7 +56,6 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
 
     # リスト定義
     SIZE_OPTIONS = ['16384', '8192', '4096', '2048', '1024', '512', '256', '128']
-    
     MIP_OPTIONS = ['自動 (最大まで生成)', 'なし (ベース画像のみ)'] + [str(i) for i in range(1, 13)]
     
     FORMAT_NAMES = [
@@ -70,10 +71,10 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return ExportDDSCustomMips_v28_AssembleFix()
+        return ExportDDSCustomMips_v30_Ultimate()
 
     def name(self):
-        return 'export_dds_custom_mips_v28'
+        return 'export_dds_custom_mips_v30'
 
     def displayName(self):
         return self.tr('DDS画像作成')
@@ -102,18 +103,25 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
 
         self.addParameter(QgsProcessingParameterEnum(self.P_FORMAT, self.tr('圧縮形式'), options=self.FORMAT_NAMES, defaultValue=0))
         
-        self.addParameter(QgsProcessingParameterEnum(self.P_MAX_LEVELS, self.tr('ミップマップ Level数'), options=self.MIP_OPTIONS, defaultValue=0))
-        
         self.addParameter(QgsProcessingParameterString(self.P_FILENAME, self.tr('保存ファイル名 (拡張子 .dds は自動付与)'), defaultValue='my_map'))
         self.addParameter(QgsProcessingParameterFolderDestination(self.P_OUTPUT_FOLDER, self.tr('出力先フォルダ')))
 
         # =====================================================================
-        #  高度なパラメータ
+        #  高度なパラメータ (折りたたみ)
         # =====================================================================
         
+        # ミップマップ数
+        param_levels = QgsProcessingParameterEnum(self.P_MAX_LEVELS, self.tr('ミップマップ Level数'), options=self.MIP_OPTIONS, defaultValue=0)
+        param_levels.setFlags(param_levels.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(param_levels)
+
+        # ★動的リスト生成ロジック (Main Threadで実行)
+        # ここで現在見えているレイヤの名前とIDを取得して固定化します
         layer_names = []
         layer_ids_str = ""
+        
         try:
+            # GUIキャンバスからレイヤ順序を取得
             layers = iface.mapCanvas().layers()
             id_list = []
             for l in layers:
@@ -121,6 +129,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
                 id_list.append(l.id())
             layer_ids_str = ",".join(id_list)
         except:
+            # GUIがない場合のフォールバック (全レイヤ)
             layers = QgsProject.instance().mapLayers().values()
             id_list = []
             for l in layers:
@@ -128,10 +137,12 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
                 id_list.append(l.id())
             layer_ids_str = ",".join(id_list)
 
+        # ★IDリストを隠しパラメータとして保存 (実行時に取り出すため)
         param_ids = QgsProcessingParameterString(self.P_VISIBLE_IDS, "Hidden IDs", defaultValue=layer_ids_str)
         param_ids.setFlags(param_ids.flags() | QgsProcessingParameterDefinition.FlagHidden)
         self.addParameter(param_ids)
 
+        # レイヤ選択プルダウン (Enumを使用)
         param_l1 = QgsProcessingParameterEnum(self.P_HIDE_L1, self.tr('Level 1 (1/2サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l1.setFlags(param_l1.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l1)
@@ -148,6 +159,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
         param_l4.setFlags(param_l4.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l4)
 
+        # ツールパス
         param_assemble = QgsProcessingParameterFile(self.P_TEX_ASSEMBLE, self.tr('texassemble.exe のパス'), fileFilter='Executables (*.exe)', defaultValue=default_assemble)
         param_assemble.setFlags(param_assemble.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_assemble)
@@ -161,13 +173,13 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
         tex_assemble = self.parameterAsFile(parameters, self.P_TEX_ASSEMBLE, context)
         tex_conv = self.parameterAsFile(parameters, self.P_TEX_CONV, context)
 
-        if not tex_assemble or not tex_conv: raise ValueError("【エラー】ツールパスが空欄です。")
+        if not tex_assemble or not tex_conv: return self.report_error("ツールパスが空欄です。", feedback)
 
         tex_assemble = os.path.normpath(tex_assemble.strip().strip('"').strip("'"))
         tex_conv = os.path.normpath(tex_conv.strip().strip('"').strip("'"))
 
-        if not os.path.exists(tex_assemble): raise ValueError(f"ツールが見つかりません: {tex_assemble}")
-        if not os.path.exists(tex_conv): raise ValueError(f"ツールが見つかりません: {tex_conv}")
+        if not os.path.exists(tex_assemble): return self.report_error(f"ツールが見つかりません: {tex_assemble}", feedback)
+        if not os.path.exists(tex_conv): return self.report_error(f"ツールが見つかりません: {tex_conv}", feedback)
 
         settings = QgsSettings()
         settings.setValue(self.SETTING_KEY_ASSEMBLE, tex_assemble)
@@ -175,7 +187,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
 
         # --- パラメータ取得 ---
         extent = self.parameterAsExtent(parameters, self.P_EXTENT, context)
-        if extent.isNull(): raise ValueError("【エラー】領域が指定されていません。")
+        if extent.isNull(): return self.report_error("領域が指定されていません。", feedback)
 
         use_custom = self.parameterAsBool(parameters, self.P_USE_CUSTOM, context)
         if use_custom:
@@ -211,7 +223,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
         
         final_dds_path = os.path.normpath(os.path.join(output_folder, f"{user_filename}.dds"))
         
-        # --- IDリスト復元 ---
+        # --- IDリスト復元 (ここが重要: 隠しパラメータから復元) ---
         ids_str = self.parameterAsString(parameters, self.P_VISIBLE_IDS, context)
         reference_layer_ids = ids_str.split(',') if ids_str else []
 
@@ -249,7 +261,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
                 curr_w = int(start_w / (2 ** level))
                 curr_h = int(start_h / (2 ** level))
 
-                # texconvは1x1まで許容するため、1未満になるまで回す
+                # texconvの安全のため1pxまで生成する
                 if curr_w < 1 or curr_h < 1: break
 
                 # レイヤフィルタリング
@@ -258,6 +270,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
                     if level >= rule_level: 
                         hidden_ids_current.update(ids)
                 
+                # 「起動時に見えていたレイヤ」の中から「隠す設定のもの」を除外
                 active_layers = []
                 for lid in reference_layer_ids:
                     if lid not in hidden_ids_current:
@@ -283,7 +296,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
                 
                 feedback.setProgress((level / total_steps) * 100)
 
-            # --- Step 2: 結合 (texassemble) ---
+            # --- Step 2: 結合 ---
             feedback.pushInfo("Combining...")
             temp_dds_uncompressed = os.path.join(temp_dir, "temp_uncompressed.dds")
             
@@ -295,27 +308,25 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
 
             cmd_assemble = [tex_assemble, "from-mips", "-y", "-o", temp_dds_uncompressed] + generated_pngs
             
-            # stdoutも取得するように設定
+            # 実行＆ログ取得
             proc_assemble = subprocess.run(
                 cmd_assemble, 
                 capture_output=True, 
                 text=True, 
-                encoding='cp932',
+                encoding='cp932', # Windows日本語環境
                 startupinfo=startupinfo
             )
             
-            # エラーチェック
             if proc_assemble.returncode != 0:
-                raise RuntimeError(f"texassemble エラー (Code {proc_assemble.returncode}):\n{proc_assemble.stderr}\n{proc_assemble.stdout}")
-                
-            if not os.path.exists(temp_dds_uncompressed):
-                raise RuntimeError(
-                    f"【重大】texassembleは正常終了しましたが、ファイルが生成されませんでした。\n"
-                    f"画像サイズや枚数が規格(Power of 2)に合っていない可能性があります。\n"
-                    f"--- texassemble ログ ---\n{proc_assemble.stdout}\n{proc_assemble.stderr}"
-                )
+                return self.report_error(f"texassemble エラー:\n{proc_assemble.stderr}\n{proc_assemble.stdout}", feedback)
 
-            # --- Step 3: 変換と移動 (texconv) ---
+            # 確実な待機とチェック
+            if not os.path.exists(temp_dds_uncompressed) or os.path.getsize(temp_dds_uncompressed) == 0:
+                return self.report_error(f"texassemble: ファイル生成失敗。\nログ:\n{proc_assemble.stdout}", feedback)
+
+            time.sleep(1.0) # ロック解除待ち
+
+            # --- Step 3: 変換と移動 ---
             feedback.pushInfo("Compressing to Final Destination...")
             
             cmd_convert = [tex_conv, "-f", format_cmd, "-y", "-o", temp_dir, temp_dds_uncompressed]
@@ -329,7 +340,7 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
             )
             
             if proc_convert.returncode != 0:
-                 raise RuntimeError(f"texconv エラー (Code {proc_convert.returncode}):\n{proc_convert.stderr}\n{proc_convert.stdout}")
+                 return self.report_error(f"texconv エラー:\n{proc_convert.stderr}\n{proc_convert.stdout}", feedback)
 
             expected_output = os.path.join(temp_dir, "temp_uncompressed.dds")
             if not os.path.exists(expected_output):
@@ -337,13 +348,25 @@ class ExportDDSCustomMips_v28_AssembleFix(QgsProcessingAlgorithm):
                 if os.path.exists(expected_output_upper):
                     expected_output = expected_output_upper
                 else:
-                    files = os.listdir(temp_dir)
-                    raise RuntimeError(f"圧縮後のファイルが見つかりません。一時フォルダ内容: {files}")
+                    return self.report_error(f"圧縮後のファイルが見つかりません。一時フォルダ内容: {os.listdir(temp_dir)}", feedback)
             
+            # 出力先作成
             dest_dir = os.path.dirname(final_dds_path)
             if not os.path.exists(dest_dir):
                 os.makedirs(dest_dir, exist_ok=True)
             
+            # 上書き移動のための事前削除
+            if os.path.exists(final_dds_path):
+                try:
+                    os.remove(final_dds_path)
+                except:
+                    pass 
+            
             shutil.move(expected_output, final_dds_path)
 
         return {self.P_OUTPUT_FOLDER: final_dds_path}
+
+    # 安全なエラー報告用
+    def report_error(self, msg, feedback):
+        feedback.reportError(msg)
+        return {}
