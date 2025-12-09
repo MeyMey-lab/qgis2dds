@@ -52,7 +52,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
     SETTING_KEY_CONV = 'DDSExporter/TexConvPath'
 
     # リスト定義
-    SIZE_OPTIONS = ['16384', '8192', '4096', '2048', '1024', '512', '256', '128']
+    SIZE_OPTIONS = ['16384', '8192', '4096', '2048', '1024', '512']
     
     FORMAT_NAMES = [
         'BC7 (高品質・推奨) - 地図に最適', 
@@ -107,7 +107,7 @@ class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
         # =====================================================================
         
         # ミップマップ数
-        param_levels = QgsProcessingParameterNumber(self.P_MAX_LEVELS, self.tr('ミップマップ数'), type=QgsProcessingParameterNumber.Integer, defaultValue=8, minValue=1, maxValue=14)
+        param_levels = QgsProcessingParameterNumber(self.P_MAX_LEVELS, self.tr('ミップマップ Level数'), type=QgsProcessingParameterNumber.Integer, defaultValue=8, minValue=1, maxValue=14)
         param_levels.setFlags(param_levels.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_levels)
 
