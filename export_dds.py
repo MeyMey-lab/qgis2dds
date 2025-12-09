@@ -2,7 +2,7 @@ from qgis.PyQt.QtCore import QCoreApplication, QSize
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
-    QgsProcessingParameterDefinition, # フラグ設定用
+    QgsProcessingParameterDefinition,
     QgsProcessingParameterEnum,
     QgsProcessingParameterNumber,
     QgsProcessingParameterFile,
@@ -10,7 +10,6 @@ from qgis.core import (
     QgsProcessingParameterString,
     QgsProcessingParameterExtent,
     QgsProcessingParameterBoolean,
-    QgsProcessingParameterMultipleLayers, 
     QgsProject,
     QgsMapSettings,
     QgsMapRendererParallelJob,
@@ -21,9 +20,10 @@ import os
 import subprocess
 import tempfile
 import shutil
+
 from qgis.utils import iface
 
-class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
+class ExportDDSCustomMips_v26_FinalFix(QgsProcessingAlgorithm):
 
     # --- パラメータID ---
     P_EXTENT = 'EXTENT'             
@@ -43,12 +43,15 @@ class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
     P_HIDE_L2 = 'HIDE_L2'
     P_HIDE_L3 = 'HIDE_L3'
     P_HIDE_L4 = 'HIDE_L4'
+    
+    # IDリスト受け渡し用の隠しパラメータ
+    P_VISIBLE_IDS = 'VISIBLE_IDS_HIDDEN'
 
     # 設定保存キー
     SETTING_KEY_ASSEMBLE = 'DDSExporter/TexAssemblePath'
     SETTING_KEY_CONV = 'DDSExporter/TexConvPath'
 
-    # リスト定義 (降順)
+    # リスト定義
     SIZE_OPTIONS = ['16384', '8192', '4096', '2048', '1024', '512', '256', '128']
     
     FORMAT_NAMES = [
@@ -64,13 +67,13 @@ class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return ExportDDSCustomMips_v23_UIClean()
+        return ExportDDSCustomMips_v26_FinalFix()
 
     def name(self):
-        return 'export_dds_custom_mips_v23'
+        return 'export_dds_custom_mips_v26'
 
     def displayName(self):
-        return self.tr('DDS作成ツール')
+        return self.tr('DDS画像作成ツール')
 
     def group(self):
         return self.tr('User Scripts')
@@ -87,11 +90,7 @@ class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
         default_assemble = settings.value(self.SETTING_KEY_ASSEMBLE, '', type=str)
         default_conv = settings.value(self.SETTING_KEY_CONV, '', type=str)
 
-        # =====================================================================
-        #  メイン表示エリア (よく使うもの)
-        # =====================================================================
         self.addParameter(QgsProcessingParameterExtent(self.P_EXTENT, self.tr('描画領域'), defaultValue=None))
-        
         self.addParameter(QgsProcessingParameterEnum(self.P_SIZE_ENUM, self.tr('DDS画像サイズ (px)'), options=self.SIZE_OPTIONS, defaultValue=3))
         
         self.addParameter(QgsProcessingParameterBoolean(self.P_USE_CUSTOM, self.tr('カスタムサイズ (チェック時のみ数値を適用)'), defaultValue=False))
@@ -104,48 +103,63 @@ class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFolderDestination(self.P_OUTPUT_FOLDER, self.tr('出力先フォルダ')))
 
         # =====================================================================
-        #  高度なパラメータ (折りたたまれるエリア)
+        #  高度なパラメータ (折りたたみ)
         # =====================================================================
         
-        # 1. ミップマップ数
-        param_levels = QgsProcessingParameterNumber(
-            self.P_MAX_LEVELS, 
-            self.tr('ミップマップ数'), 
-            type=QgsProcessingParameterNumber.Integer, 
-            defaultValue=8, minValue=1, maxValue=14
-        )
+        # ミップマップ数
+        param_levels = QgsProcessingParameterNumber(self.P_MAX_LEVELS, self.tr('ミップマップ数'), type=QgsProcessingParameterNumber.Integer, defaultValue=8, minValue=1, maxValue=14)
         param_levels.setFlags(param_levels.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_levels)
 
-        # レイヤリスト取得準備
+        # 動的リスト生成ロジック
         layer_names = []
+        layer_ids_str = ""
+        
         try:
+            # iface (GUI) がある場合、キャンバスのレイヤ順序(上から順)を取得
             layers = iface.mapCanvas().layers()
+            id_list = []
             for l in layers:
                 layer_names.append(l.name())
+                id_list.append(l.id())
+            layer_ids_str = ",".join(id_list)
         except:
+            # GUIがない場合のフォールバック
             layers = QgsProject.instance().mapLayers().values()
+            id_list = []
             for l in layers:
                 layer_names.append(l.name())
+                id_list.append(l.id())
+            layer_ids_str = ",".join(id_list)
 
-        # 2. レイヤ制御設定
+        # 隠しパラメータ: レイヤIDリスト
+        param_ids = QgsProcessingParameterString(self.P_VISIBLE_IDS, "Hidden IDs", defaultValue=layer_ids_str)
+        param_ids.setFlags(param_ids.flags() | QgsProcessingParameterDefinition.FlagHidden)
+        self.addParameter(param_ids)
+
+        # レイヤ選択プルダウン
+        
+        # Level 1
         param_l1 = QgsProcessingParameterEnum(self.P_HIDE_L1, self.tr('Level 1 (1/2サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l1.setFlags(param_l1.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l1)
 
+        # Level 2
         param_l2 = QgsProcessingParameterEnum(self.P_HIDE_L2, self.tr('Level 2 (1/4サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l2.setFlags(param_l2.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l2)
 
+        # Level 3
         param_l3 = QgsProcessingParameterEnum(self.P_HIDE_L3, self.tr('Level 3 (1/8サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l3.setFlags(param_l3.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l3)
 
+        # Level 4
         param_l4 = QgsProcessingParameterEnum(self.P_HIDE_L4, self.tr('Level 4 (1/16サイズ) 以降で隠すレイヤ'), options=layer_names, allowMultiple=True, optional=True)
         param_l4.setFlags(param_l4.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_l4)
 
-        # 3. ツールパス (ここに移動)
+        # ツールパス
         param_assemble = QgsProcessingParameterFile(self.P_TEX_ASSEMBLE, self.tr('texassemble.exe のパス'), fileFilter='Executables (*.exe)', defaultValue=default_assemble)
         param_assemble.setFlags(param_assemble.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(param_assemble)
@@ -197,24 +211,15 @@ class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
         
         final_dds_path = os.path.normpath(os.path.join(output_folder, f"{user_filename}.dds"))
         
-        # GUI選択肢（インデックス番号）からレイヤIDへの変換処理
+        # --- IDリスト復元と設定 ---
+        ids_str = self.parameterAsString(parameters, self.P_VISIBLE_IDS, context)
+        reference_layer_ids = ids_str.split(',') if ids_str else []
+
         l1_indices = self.parameterAsEnums(parameters, self.P_HIDE_L1, context)
         l2_indices = self.parameterAsEnums(parameters, self.P_HIDE_L2, context)
         l3_indices = self.parameterAsEnums(parameters, self.P_HIDE_L3, context)
         l4_indices = self.parameterAsEnums(parameters, self.P_HIDE_L4, context)
 
-        # 実行時に改めて「基準レイヤリスト」を作成
-        reference_layer_ids = []
-        try:
-            layers_obj = iface.mapCanvas().layers()
-            for l in layers_obj:
-                reference_layer_ids.append(l.id())
-        except:
-            layers_obj = QgsProject.instance().mapLayers().values()
-            for l in layers_obj:
-                reference_layer_ids.append(l.id())
-
-        # インデックス番号をレイヤIDに変換
         hide_rules_ids = {
             1: set(reference_layer_ids[i] for i in l1_indices if i < len(reference_layer_ids)),
             2: set(reference_layer_ids[i] for i in l2_indices if i < len(reference_layer_ids)),
@@ -231,13 +236,6 @@ class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
             
             project = context.project()
             
-            try:
-                base_layers = iface.mapCanvas().layers()
-                feedback.pushInfo("GUIキャンバスのチェック状態を基準にします。")
-            except:
-                base_layers = project.mapThemeCollection().masterLayerOrder()
-                feedback.pushInfo("全レイヤを基準にします。")
-
             bg_color = project.backgroundColor()
 
             generated_pngs = []
@@ -254,22 +252,24 @@ class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
 
                 if curr_w < 4 or curr_h < 4: break
 
-                # ★レイヤフィルタリング★
+                # レイヤフィルタリング
                 hidden_ids_current = set()
                 for rule_level, ids in hide_rules_ids.items():
                     if level >= rule_level: 
                         hidden_ids_current.update(ids)
                 
                 active_layers = []
-                for layer in base_layers:
-                    if layer.id() not in hidden_ids_current:
-                        active_layers.append(layer)
+                for lid in reference_layer_ids:
+                    if lid not in hidden_ids_current:
+                        lyr = project.mapLayer(lid)
+                        if lyr:
+                            active_layers.append(lyr)
 
                 settings = QgsMapSettings()
                 settings.setLayers(active_layers)
                 settings.setDestinationCrs(project.crs())
                 settings.setExtent(extent)
-                settings.setOutputSize(QSize(curr_w, curr_h))
+                settings.setOutputSize(QSize(curr_w, curr_h)) # QSize is now imported
                 settings.setBackgroundColor(bg_color)
 
                 job = QgsMapRendererParallelJob(settings)
@@ -282,7 +282,7 @@ class ExportDDSCustomMips_v23_UIClean(QgsProcessingAlgorithm):
                 generated_pngs.append(out_path)
                 
                 feedback.setProgress((level / total_steps) * 100)
-                feedback.pushInfo(f"Level {level} ({curr_w}px): {len(active_layers)} layers visible")
+                feedback.pushInfo(f"Level {level} ({curr_w}px): Rendering {len(active_layers)} layers")
 
             # --- Step 2: 結合 ---
             feedback.pushInfo("Combining...")
