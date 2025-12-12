@@ -79,7 +79,7 @@ class ExportDDSCustomMips_v31_SequentialFix(QgsProcessingAlgorithm):
         return 'export_dds_custom_mips_v31'
 
     def displayName(self):
-        return self.tr('DDS画像作成 v31 (安定版)')
+        return self.tr('DDS画像作成')
 
     def group(self):
         return self.tr('User Scripts')
